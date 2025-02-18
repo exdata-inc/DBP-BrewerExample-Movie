@@ -92,7 +92,7 @@ def process_video(
 
 
 def brewing_videos(
-    pattern,
+    data_set_pattern,
     data_set_base_path,
     brewing_arguments,
     output_path,
@@ -100,7 +100,7 @@ def brewing_videos(
     dt_end,
     duration,
 ):
-    match pattern:
+    match data_set_pattern:
         case "%Y/%Y-%m-%d.mp4":
             if data_set_base_path.startswith("file://"):
                 file_path = data_set_base_path.replace("file://", "")
@@ -115,8 +115,9 @@ def brewing_videos(
                     codec = brewing_arguments.get("codec", "libx264")
                     if output_path.endswith("/"):
                         output_path = output_path[:-1]
+                    brewed_output_path = os.path.join(output_path, year_str)
                     process_video(
-                        output_path=output_path,
+                        output_path=brewed_output_path,
                         video_path=data_set_path,
                         video_name=video_name,
                         threshold=int(threshold),
@@ -163,7 +164,7 @@ def main(json_ld):
                 if data_set_pattern == data_output_path_pattern:
                     if data_set_pattern.endswith("mp4"):
                         brewing_videos(
-                            pattern=data_set_pattern,
+                            data_set_pattern=data_set_pattern,
                             data_set_base_path=data_set_base_path,
                             brewing_arguments=brewing_arguments,
                             output_path=output_path,
@@ -179,6 +180,6 @@ def main(json_ld):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a video file or all videos in a directory.")
-    parser.add_argument("json_ld", type=str, help="Path to the video file or directory")
+    parser.add_argument("-j", "--json_ld", type=str, help="Path to the video file or directory", default="https://dev-rwdb.srv.exdata.co.jp/api/v0/brewing_demands/69/?format=json")
     args = parser.parse_args()
     main(args.json_ld)

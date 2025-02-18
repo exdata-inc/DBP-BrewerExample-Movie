@@ -76,8 +76,8 @@ def concatenate_videos(output_dir, video_name, part_files, threshold, window_thr
                 modified_part_file = modified_part_file[1:]
 
             file.write(f"file '{modified_part_file}'\n")
-
-    concatenated_output = f"{output_dir}/{video_name}-{threshold}-{window_threshold}-concatenated.mkv"
+            
+    output_video = os.path.join(output_dir, video_name)
 
     command = [
         "ffmpeg",
@@ -94,12 +94,12 @@ def concatenate_videos(output_dir, video_name, part_files, threshold, window_thr
         "fast",
         "-crf",
         "22",
-        concatenated_output,
+        output_video
     ]
 
     try:
         subprocess.run(command, check=True)
-        print(f"Concatenated video saved as: {concatenated_output}")
+        print(f"Concatenated video saved as: {output_video}")
     except subprocess.CalledProcessError as e:
         print(f"Error occurred while concatenating videos: {e}")
     finally:

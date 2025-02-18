@@ -47,7 +47,10 @@ async def fetch_nested_data(data, current_depth):
 
 
 async def fetch_brewing_demands_json(url: str, depth: int = 6):
-    initial_response = await fetch_data(url)
-    initial_json_data = json.loads(initial_response)
+    if url.startswith("http"):
+        initial_response = await fetch_data(url)
+        initial_json_data = json.loads(initial_response)
+    else:
+        initial_json_data = json.loads(url)
     final_result = await fetch_nested_data(initial_json_data, depth)
     return final_result

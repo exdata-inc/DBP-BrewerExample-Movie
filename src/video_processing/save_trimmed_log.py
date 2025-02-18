@@ -180,16 +180,9 @@ def save_trimmed_log(
         video_fps=video_fps,
         codec=codec,
     )
-    output_path = os.path.join(output_path, f"{video_name}-{threshold}-{window_threshold}-trimmed.json")
+    video_name_without_ext = os.path.splitext(video_name)[0]
+    output_path = os.path.join(output_path, f"{video_name_without_ext}.json")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as file:
         json.dump(result, file, indent=4)
     return result
-
-
-if __name__ == "__main__":
-    diffs_file_path = "./sample.txt"
-    video_path = "/home/runner/work/Video-Processing/Video-Processing/data/videos/camera1/video1.mp4"
-    output_path = "./"
-    video_name = "video_04-00-29_37.mkv"
-    threshold = 30
-    save_trimmed_log(diffs_file_path, video_path, output_path, video_name, threshold)
