@@ -8,12 +8,14 @@ def get_brewing_arguments(brewing_demands_json):
     brewing_arguments = {}
     try:
         for brewing_argument_info in brewing_demands_json["dbp:brewingArgument"]:
-            if "threshold" == brewing_argument_info["schema:name"]:
+            if "threshold" == brewing_argument_info["dbp:key"]:
                 brewing_arguments["threshold"] = brewing_argument_info["schema:value"]
-            if "window_threshold" == brewing_argument_info["schema:name"]:
+            if "window_threshold" == brewing_argument_info["dbp:key"]:
                 brewing_arguments["window_threshold"] = brewing_argument_info["schema:value"]
-            if "codec" == brewing_argument_info["schema:name"]:
+            if "codec" == brewing_argument_info["dbp:key"]:
                 brewing_arguments["codec"] = brewing_argument_info["schema:value"]
+            if "output_prefix" == brewing_argument_info["dbp:key"]:
+                brewing_arguments["output_prefix"] = brewing_argument_info["schema:value"]
         return brewing_arguments
     except Exception:
         print("No Brewing Arguments Found")
