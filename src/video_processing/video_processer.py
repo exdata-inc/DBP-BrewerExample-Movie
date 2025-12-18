@@ -34,7 +34,7 @@ def run_ffmpeg_command(input_video, previous_end_time, start_time, codec, output
         print(f"Error occurred while trimming section: {e}")
 
 
-def trim_video_sections(input_dir, output_dir, trimmed_data):
+def trim_video_sections(input_dir, output_dir, output_video_name, trimmed_data):
     video_name = trimmed_data["video_name"]
     input_video = os.path.join(input_dir, video_name)
     codec = trimmed_data.get("codec", "h264")
@@ -46,7 +46,7 @@ def trim_video_sections(input_dir, output_dir, trimmed_data):
     for i, section in enumerate(trimmed_sections):
         start_time = section["start_time"]
         if previous_end_time != start_time:
-            output_file = f"{output_dir}/{video_name}-part{i+1}.mkv"
+            output_file = f"{output_dir}/{output_video_name}-part{i+1}.mkv"
             part_files.append(output_file)
             run_ffmpeg_command(input_video, previous_end_time, start_time, codec, output_file)
 
@@ -58,14 +58,16 @@ def trim_video_sections(input_dir, output_dir, trimmed_data):
         last_start_time = last_section["end_time"]
         last_end_time = trimmed_data["video_length"]
         if last_start_time != last_end_time:
-            output_file = f"{output_dir}/{video_name}-part{len(trimmed_sections)+1}.mkv"
+            output_file = f"{output_dir}/{output_video_name}-part{len(trimmed_sections)+1}.mkv"
             part_files.append(output_file)
             run_ffmpeg_command(input_video, last_start_time, last_end_time, codec, output_file)
 
     return part_files
 
 
-def concatenate_videos(output_dir, video_name, part_files, threshold, window_threshold, codec="h264"):
+def concatenate_videos(
+    output_dir, output_video_name, part_files, threshold, window_threshold, codec="h264"
+):
     print("Concatenating trimmed videos...")
     list_file = f"{output_dir}/concat_list.txt"
 
@@ -76,8 +78,8 @@ def concatenate_videos(output_dir, video_name, part_files, threshold, window_thr
                 modified_part_file = modified_part_file[1:]
 
             file.write(f"file '{modified_part_file}'\n")
-            
-    output_video = os.path.join(output_dir, video_name)
+
+    output_video = os.path.join(output_dir, output_video_name)
 
     command = [
         "ffmpeg",
@@ -111,9 +113,9 @@ def concatenate_videos(output_dir, video_name, part_files, threshold, window_thr
             print(f"Error occurred while cleaning up: {e}")
 
 
-def copy_video_with_reencoding(input_dir, output_dir, video_name, codec):
+def copy_video_with_reencoding(input_dir, output_dir, video_name, output_video_name, codec):
     input_video = os.path.join(input_dir, video_name)
-    output_video = os.path.join(output_dir, video_name)
+    output_video = os.path.join(output_dir, output_video_name)
     command = [
         "ffmpeg",
         "-y",
@@ -166,12 +168,11 @@ def read_frame_diffs(file_path):
     return frame_diffs
 
 
-def trim_video(video_dir, video_name, output_dir, frame_diffs_file, threshold):
+def trim_video(video_dir, video_name, output_dir, output_video_name, frame_diffs_file, threshold):
     video_path = os.path.join(video_dir, video_name)
     print("Opening video...")
     cap = cv2.VideoCapture(video_path)
-    output_path = os.path.join(output_dir, f"{video_name}-trimmed.mkv")
-
+    output_path = os.path.join(output_dir, f"{output_video_name}-trimmed.mkv")
     if not cap.isOpened():
         print("Error: Could not open video.")
         return
