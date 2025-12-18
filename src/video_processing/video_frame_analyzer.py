@@ -78,6 +78,9 @@ def calculate_dynamic_window(center, axis_length, threshold, diff_array):
 
 
 def has_frame_diff_in_window(frame1, frame2, x, y, width, height, window_threshold=5000):
+    if width <= 0 or height <= 0:
+        return False
+
     window1 = frame1[y : y + height, x : x + width]
     window2 = frame2[y : y + height, x : x + width]
 
@@ -194,4 +197,10 @@ def show_max_diff_frames(frame_diffs):
 if __name__ == "__main__":
     video_path = "./data/input/cameraA2"
     video_name = "video_04-00-29_37.mkv"
-    calculate_frame_variance(video_dir=video_path, video_name=video_name, save_diff_file=True)
+    calculate_frame_variance(
+        video_dir=video_path,
+        video_name=video_name,
+        threshold=30,
+        window_threshold=5000,
+        save_diff_file=True,
+    )
