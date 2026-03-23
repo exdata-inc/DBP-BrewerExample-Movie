@@ -195,7 +195,7 @@ def main(json_ld):
                     data_set_base_path = f"file://{data_set_base_path_in_docker}"
                 data_set_pattern = data_set_object.get("dbp:pattern")
                 if data_set_pattern == data_output_path_pattern:
-                    if data_set_pattern.endswith("mp4"):
+                    if data_set_pattern.endswith("mp4") or data_set_pattern.endswith("mkv"):
                         brewing_videos(
                             data_set_pattern=data_set_pattern,
                             data_set_base_path=data_set_base_path,
