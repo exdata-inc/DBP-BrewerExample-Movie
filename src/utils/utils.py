@@ -14,6 +14,8 @@ def get_brewing_arguments(brewing_demands_json):
                 brewing_arguments["window_threshold"] = brewing_argument_info["schema:value"]
             if "codec" == brewing_argument_info["dbp:key"]:
                 brewing_arguments["codec"] = brewing_argument_info["schema:value"]
+            if "do_trim" == brewing_argument_info["dbp:key"]:
+                brewing_arguments["do_trim"] = brewing_argument_info["schema:value"]
             if "output_prefix" == brewing_argument_info["dbp:key"]:
                 brewing_arguments["output_prefix"] = brewing_argument_info["schema:value"]
         return brewing_arguments

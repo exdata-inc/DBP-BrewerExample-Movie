@@ -26,6 +26,7 @@ def process_video(
     window_threshold,
     codec="h264",
     use_variance=True,
+    do_trim=True,
     do_trim_using_opencv=False,
     output_prefix="",
 ):
@@ -33,64 +34,74 @@ def process_video(
         output_path = output_path.replace("file://", "")
         output_video_name = f"{output_prefix}{video_name}"
         print(f"Processing video: {video_path}/{video_name}")
-        print("Calculating frame differences...")
-        if use_variance:
-            frame_diffs_file = calculate_frame_variance(
-                video_dir=video_path, video_name=video_name, threshold=threshold, window_threshold=window_threshold
-            )
-        else:
-            frame_diffs_file = calculate_frame_diff(video_dir=video_path, video_name=video_name, threadhold=threshold)
-
-        print("Saving trimmed log...")
-        video_length, video_fps = calc_video_duration_and_fps(video_path, video_name)
-        triimed_data = save_trimmed_log(
-            diffs_file_path=frame_diffs_file,
-            video_path=video_path,
-            output_path=output_path,
-            video_name=video_name,
-            output_video_name=output_video_name,
-            threshold=threshold,
-            video_length=video_length,
-            video_fps=video_fps,
-            window_threshold=window_threshold,
-            codec=codec,
-        )
-
-        if do_trim_using_opencv:
-            print("Trimming video...")
-            trim_video(
-                video_dir=video_path,
-                video_name=video_name,
-                output_dir=output_path,
-                output_video_name=output_video_name,
-                frame_diffs_file=frame_diffs_file,
-                threshold=threshold,
-            )
-        else:
-            part_files = trim_video_sections(
-                input_dir=video_path,
-                output_dir=output_path,
-                output_video_name=output_video_name,
-                trimmed_data=triimed_data,
-            )
-            if not part_files:
-                print("No sections to trim.")
-                copy_video_with_reencoding(
-                    input_dir=video_path,
-                    output_dir=output_path,
-                    video_name=video_name,
-                    output_video_name=output_video_name,
-                    codec=codec,
+        if do_trim:
+            print("Calculating frame differences...")
+            if use_variance:
+                frame_diffs_file = calculate_frame_variance(
+                    video_dir=video_path, video_name=video_name, threshold=threshold, window_threshold=window_threshold
                 )
             else:
-                concatenate_videos(
+                frame_diffs_file = calculate_frame_diff(video_dir=video_path, video_name=video_name, threadhold=threshold)
+
+            print("Saving trimmed log...")
+            video_length, video_fps = calc_video_duration_and_fps(video_path, video_name)
+            triimed_data = save_trimmed_log(
+                diffs_file_path=frame_diffs_file,
+                video_path=video_path,
+                output_path=output_path,
+                video_name=video_name,
+                output_video_name=output_video_name,
+                threshold=threshold,
+                video_length=video_length,
+                video_fps=video_fps,
+                window_threshold=window_threshold,
+                codec=codec,
+            )
+
+            if do_trim_using_opencv:
+                print("Trimming video...")
+                trim_video(
+                    video_dir=video_path,
+                    video_name=video_name,
                     output_dir=output_path,
                     output_video_name=output_video_name,
-                    part_files=part_files,
+                    frame_diffs_file=frame_diffs_file,
                     threshold=threshold,
-                    window_threshold=window_threshold,
-                    codec=codec,
                 )
+            else:
+                part_files = trim_video_sections(
+                    input_dir=video_path,
+                    output_dir=output_path,
+                    output_video_name=output_video_name,
+                    trimmed_data=triimed_data,
+                )
+                if not part_files:
+                    print("No sections to trim.")
+                    copy_video_with_reencoding(
+                        input_dir=video_path,
+                        output_dir=output_path,
+                        video_name=video_name,
+                        output_video_name=output_video_name,
+                        codec=codec,
+                    )
+                else:
+                    concatenate_videos(
+                        output_dir=output_path,
+                        output_video_name=output_video_name,
+                        part_files=part_files,
+                        threshold=threshold,
+                        window_threshold=window_threshold,
+                        codec=codec,
+                    )
+        else:
+            print("Re-encoding video without trimming...")
+            copy_video_with_reencoding(
+                input_dir=video_path,
+                output_dir=output_path,
+                video_name=video_name,
+                output_video_name=output_video_name,
+                codec=codec,
+            )
     # elif output_path.startswith("ftp://"):
     #     pass                                          #TODO: Implement this!
     # elif output_path.startswith("http://"):
@@ -119,6 +130,7 @@ def brewing_videos(
     threshold = brewing_arguments.get("threshold", 30)
     window_threshold = brewing_arguments.get("window_threshold", 5000)
     codec = brewing_arguments.get("codec", "libx264")
+    do_trim = brewing_arguments.get("do_trim", True)
     output_prefix = brewing_arguments.get("output_prefix", "")
 
     if data_set_base_path.startswith("file://"):
@@ -144,6 +156,7 @@ def brewing_videos(
                         threshold=int(threshold),
                         window_threshold=int(window_threshold),
                         codec=codec,
+                        do_trim=do_trim,
                         output_prefix=output_prefix,
                     )
             dt += duration

@@ -116,6 +116,7 @@ def concatenate_videos(
 def copy_video_with_reencoding(input_dir, output_dir, video_name, output_video_name, codec):
     input_video = os.path.join(input_dir, video_name)
     output_video = os.path.join(output_dir, output_video_name)
+    os.makedirs(os.path.dirname(output_video), exist_ok=True)
     command = [
         "ffmpeg",
         "-y",
