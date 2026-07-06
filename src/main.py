@@ -1,5 +1,6 @@
 import os
 import glob
+import json
 import asyncio
 import argparse
 from datetime import datetime
@@ -14,8 +15,142 @@ from video_processing.video_processer import (
 )
 from json_ld_utils.json_ld_loader import fetch_brewing_demands_json
 from utils.utils import get_brewing_arguments, extract_minimum_unit, extract_data_sets
+from kintone_api import KintoneClient, create_video_record
+from media_metadata import run_ffprobe_metadata, get_mount_ip, extract_thumbnail
 
 IS_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER") == "1"
+
+# ホストのディレクトリをコンテナ内へマウントする際の接頭辞
+# （main() で JSON-LD の baseUrl を <prefix>/<host_path> に書き換えている）
+DOCKER_INPUT_PREFIX = "/input_in_docker"
+DOCKER_OUTPUT_PREFIX = "/output_in_docker"
+
+
+def _to_bool(value):
+    """schema:value や環境変数（bool / "true" / "1" など）を真偽値に正規化する"""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _extract_camera(video_path):
+    """入力パスから camera 識別子を抽出する（save_trimmed_log と同じ規則）。"""
+    return next((part for part in video_path.split("/") if part.startswith("camera")), "unknown")
+
+
+def _to_host_path(path):
+    """
+    コンテナ内パスを「ホストから見たパス」に変換する。
+
+    Docker実行時、出力/入力パスは <prefix>/<host_path> に書き換えられている。
+    Kintoneに記録するパス(path / thumbnail_img_path)は、コンテナ固有の接頭辞を
+    取り除いてホスト側のパスに戻す。ファイル自体の読み書きには使わない。
+    """
+    if not path or not IS_IN_DOCKER:
+        return path
+    for prefix in (DOCKER_OUTPUT_PREFIX, DOCKER_INPUT_PREFIX):
+        if path == prefix:
+            return "/"
+        if path.startswith(prefix + "/"):
+            return path[len(prefix):]
+    return path
+
+
+def _build_note_video(
+    input_video,
+    output_video,
+    brewer,
+    do_trim,
+    do_trim_using_opencv,
+    threshold,
+    window_threshold,
+    codec,
+    trimmed_data,
+    ffmpeg_commands,
+    success,
+    error_message,
+):
+    """
+    note_video 用の文字列を生成する。
+
+    本リポジトリでこの処理を一意に再現できるよう、入力・醸造引数・トリミング区間・
+    実際に実行した ffmpeg コマンドを JSON 文字列としてまとめる。
+    """
+    note = {
+        "repo": "DBP-BrewerExample-Movie",
+        "status": "success" if success else "failed",
+        "brewer": brewer,
+        "do_trim": bool(do_trim),
+        "do_trim_using_opencv": bool(do_trim_using_opencv),
+        "threshold": threshold,
+        "window_threshold": window_threshold,
+        "codec": codec,
+        "input_video": input_video,
+        "output_video": output_video,
+        "ffmpeg_commands": ffmpeg_commands,
+    }
+    if error_message:
+        note["error_message"] = error_message
+    if trimmed_data:
+        note["video_length"] = trimmed_data.get("video_length")
+        note["video_fps"] = trimmed_data.get("video_fps")
+        note["trimmed_sections"] = trimmed_data.get("trimmed_sections")
+    return json.dumps(note, ensure_ascii=False)
+
+
+def _push_process_log_to_kintone(
+    depo,
+    camera,
+    year_month,
+    video_path,
+    input_video,
+    output_video,
+    note_video,
+    client=None,
+):
+    """
+    処理結果を dbp-video-brewer(TRUSCO) と同一スキーマで Kintone にプッシュする。
+    camera × year_month のレコードへ動画行を追記（無ければ新規作成）。
+    Kintone側のエラーは動画醸造の処理に影響させない。
+    """
+    try:
+        client = client or KintoneClient()
+        if not client.is_configured:
+            print(
+                "Kintone is not configured "
+                "(KINTONE_SUBDOMAIN / KINTONE_APP_ID / KINTONE_API_TOKEN). Skipping log push."
+            )
+            return
+
+        # ファイルの読み書き・メタデータ取得はコンテナ内パスで行い、
+        # Kintoneに記録するパスはホストから見たパスに変換する。
+        input_size = os.path.getsize(input_video) if os.path.exists(input_video) else 0
+        output_size = os.path.getsize(output_video) if os.path.exists(output_video) else 0
+
+        metadata = run_ffprobe_metadata(input_video) if os.path.exists(input_video) else None
+        ip = get_mount_ip(video_path)
+        thumbnail = extract_thumbnail(output_video) if os.path.exists(output_video) else None
+
+        video = create_video_record(
+            output_path=_to_host_path(output_video),
+            original_size=input_size,
+            compressed_size=output_size,
+            note_video=note_video,
+            metadata=metadata,
+            ip=ip,
+            thumbnail_img_path=_to_host_path(thumbnail),
+        )
+
+        result = client.add_or_update_camera(depo, camera, year_month, [video], note="")
+        if result.get("success"):
+            action = result.get("action", "pushed")
+            print(f"Kintone: video {action} (depo={depo}, camera={camera}, year_month={year_month})")
+        else:
+            print(f"Failed to push Kintone log: {result.get('error')}")
+    except Exception as e:
+        print(f"Error while pushing Kintone log: {e}")
 
 
 def process_video(
@@ -29,87 +164,135 @@ def process_video(
     do_trim=True,
     do_trim_using_opencv=False,
     output_prefix="",
+    push_kintone=False,
+    depo="",
+    year_month=None,
 ):
-    if output_path.startswith("file://"):
-        output_path = output_path.replace("file://", "")
-        output_video_name = os.path.basename(f"{output_prefix}{video_name}")
-        print(f"Processing video: {video_path}/{video_name}")
-        if do_trim:
-            print("Calculating frame differences...")
-            if use_variance:
-                frame_diffs_file = calculate_frame_variance(
-                    video_dir=video_path, video_name=video_name, threshold=threshold, window_threshold=window_threshold
-                )
-            else:
-                frame_diffs_file = calculate_frame_diff(video_dir=video_path, video_name=video_name, threadhold=threshold)
-
-            print("Saving trimmed log...")
-            video_length, video_fps = calc_video_duration_and_fps(video_path, video_name)
-            triimed_data = save_trimmed_log(
-                diffs_file_path=frame_diffs_file,
-                video_path=video_path,
-                output_path=output_path,
-                video_name=video_name,
-                output_video_name=output_video_name,
-                threshold=threshold,
-                video_length=video_length,
-                video_fps=video_fps,
-                window_threshold=window_threshold,
-                codec=codec,
-            )
-
-            if do_trim_using_opencv:
-                print("Trimming video...")
-                trim_video(
-                    video_dir=video_path,
-                    video_name=video_name,
-                    output_dir=output_path,
-                    output_video_name=output_video_name,
-                    frame_diffs_file=frame_diffs_file,
-                    threshold=threshold,
-                )
-            else:
-                part_files = trim_video_sections(
-                    input_dir=video_path,
-                    output_dir=output_path,
-                    output_video_name=output_video_name,
-                    trimmed_data=triimed_data,
-                )
-                if not part_files:
-                    print("No sections to trim.")
-                    copy_video_with_reencoding(
-                        input_dir=video_path,
-                        output_dir=output_path,
-                        video_name=video_name,
-                        output_video_name=output_video_name,
-                        codec=codec,
+    output_video_name = os.path.basename(f"{output_prefix}{video_name}")
+    triimed_data = None
+    success = True
+    error_message = None
+    # Kintoneログ（note_video）に実行した ffmpeg コマンドを記録して再現可能にする
+    ffmpeg_commands = []
+    brewer = ("variance" if use_variance else "frame_diffs") if do_trim else "reencode_only"
+    camera = _extract_camera(video_path)
+    resolved_year_month = year_month or datetime.now().strftime("%Y-%m")
+    # 出力先の種類にかかわらず、処理後にKintoneへlog送信できるよう try を全ブランチの外側に取る
+    try:
+        if output_path.startswith("file://"):
+            output_path = output_path.replace("file://", "")
+            print(f"Processing video: {video_path}/{video_name}")
+            if do_trim:
+                print("Calculating frame differences...")
+                if use_variance:
+                    frame_diffs_file = calculate_frame_variance(
+                        video_dir=video_path, video_name=video_name, threshold=threshold, window_threshold=window_threshold
                     )
                 else:
-                    concatenate_videos(
+                    frame_diffs_file = calculate_frame_diff(video_dir=video_path, video_name=video_name, threadhold=threshold)
+
+                print("Saving trimmed log...")
+                video_length, video_fps = calc_video_duration_and_fps(video_path, video_name)
+                triimed_data = save_trimmed_log(
+                    diffs_file_path=frame_diffs_file,
+                    video_path=video_path,
+                    output_path=output_path,
+                    video_name=video_name,
+                    output_video_name=output_video_name,
+                    threshold=threshold,
+                    video_length=video_length,
+                    video_fps=video_fps,
+                    window_threshold=window_threshold,
+                    codec=codec,
+                )
+
+                if do_trim_using_opencv:
+                    print("Trimming video...")
+                    trim_video(
+                        video_dir=video_path,
+                        video_name=video_name,
                         output_dir=output_path,
                         output_video_name=output_video_name,
-                        part_files=part_files,
+                        frame_diffs_file=frame_diffs_file,
                         threshold=threshold,
-                        window_threshold=window_threshold,
-                        codec=codec,
                     )
+                else:
+                    part_files = trim_video_sections(
+                        input_dir=video_path,
+                        output_dir=output_path,
+                        output_video_name=output_video_name,
+                        trimmed_data=triimed_data,
+                        command_log=ffmpeg_commands,
+                    )
+                    if not part_files:
+                        print("No sections to trim.")
+                        copy_video_with_reencoding(
+                            input_dir=video_path,
+                            output_dir=output_path,
+                            video_name=video_name,
+                            output_video_name=output_video_name,
+                            codec=codec,
+                            command_log=ffmpeg_commands,
+                        )
+                    else:
+                        concatenate_videos(
+                            output_dir=output_path,
+                            output_video_name=output_video_name,
+                            part_files=part_files,
+                            threshold=threshold,
+                            window_threshold=window_threshold,
+                            codec=codec,
+                            command_log=ffmpeg_commands,
+                        )
+            else:
+                print("Re-encoding video without trimming...")
+                copy_video_with_reencoding(
+                    input_dir=video_path,
+                    output_dir=output_path,
+                    video_name=video_name,
+                    output_video_name=output_video_name,
+                    codec=codec,
+                    command_log=ffmpeg_commands,
+                )
+        # elif output_path.startswith("ftp://"):
+        #     pass                                          #TODO: Implement this!
+        # elif output_path.startswith("http://"):
+        #     pass                                          #TODO: Implement this!
+        # elif output_path.startswith("https://"):
+        #     pass                                          #TODO: Implement this!
         else:
-            print("Re-encoding video without trimming...")
-            copy_video_with_reencoding(
-                input_dir=video_path,
-                output_dir=output_path,
-                video_name=video_name,
-                output_video_name=output_video_name,
+            raise ValueError("Error: Unknown output_path")
+    except Exception as e:
+        success = False
+        error_message = str(e)
+        raise
+    finally:
+        if push_kintone:
+            input_video = os.path.join(video_path, video_name)
+            output_video = os.path.join(output_path, output_video_name)
+            note_video = _build_note_video(
+                input_video=input_video,
+                output_video=output_video,
+                brewer=brewer,
+                do_trim=do_trim,
+                do_trim_using_opencv=do_trim_using_opencv,
+                threshold=threshold,
+                window_threshold=window_threshold,
                 codec=codec,
+                trimmed_data=triimed_data,
+                ffmpeg_commands=ffmpeg_commands,
+                success=success,
+                error_message=error_message,
             )
-    # elif output_path.startswith("ftp://"):
-    #     pass                                          #TODO: Implement this!
-    # elif output_path.startswith("http://"):
-    #     pass                                          #TODO: Implement this!
-    # elif output_path.startswith("https://"):
-    #     pass                                          #TODO: Implement this!
-    else:
-        raise ValueError("Error: Unknown output_path")
+            _push_process_log_to_kintone(
+                depo=depo,
+                camera=camera,
+                year_month=resolved_year_month,
+                video_path=video_path,
+                input_video=input_video,
+                output_video=output_video,
+                note_video=note_video,
+            )
 
     print("Process completed successfully.")
     print("----------params----------")
@@ -132,6 +315,12 @@ def brewing_videos(
     codec = brewing_arguments.get("codec", "libx264")
     do_trim = brewing_arguments.get("do_trim", True)
     output_prefix = brewing_arguments.get("output_prefix", "")
+    # 醸造引数 push_kintone、または環境変数 KINTONE_PUSH_LOG が有効ならKintoneにログを送信する
+    push_kintone = _to_bool(brewing_arguments.get("push_kintone", False)) or _to_bool(
+        os.getenv("KINTONE_PUSH_LOG")
+    )
+    # Kintoneレコードのキーとなる拠点。醸造引数 depo または環境変数 KINTONE_DEPO
+    depo = brewing_arguments.get("depo") or os.getenv("KINTONE_DEPO", "")
 
     if data_set_base_path.startswith("file://"):
         file_path = data_set_base_path.replace("file://", "")
@@ -139,6 +328,8 @@ def brewing_videos(
             data_set_pattern = data_set_pattern[1:]
         dt = dt_start
         while dt <= dt_end:
+            # year_month は処理対象日から決定（TRUSCOと同じ規則）
+            year_month = dt.strftime("%Y-%m")
             video_path_pattern = os.path.join(file_path, dt.strftime(data_set_pattern))
             video_paths = glob.glob(video_path_pattern)
             if not video_paths:
@@ -158,6 +349,9 @@ def brewing_videos(
                         codec=codec,
                         do_trim=do_trim,
                         output_prefix=output_prefix,
+                        push_kintone=push_kintone,
+                        depo=depo,
+                        year_month=year_month,
                     )
             dt += duration
     # elif data_set_base_path.startswith("ftp://"):
@@ -185,7 +379,7 @@ def main(json_ld):
         if IS_IN_DOCKER and output_path.startswith("file://"):
             output_path_wo_protocol = output_path.replace("file://", "")
             output_path_in_docker = os.path.join(
-                '/output_in_docker', output_path_wo_protocol.lstrip('/')
+                DOCKER_OUTPUT_PREFIX, output_path_wo_protocol.lstrip('/')
             )
             output_path = f"file://{output_path_in_docker}"
         data_output_path_pattern = brewing_demands_json.get("dbp:brewerOutputStore", {}).get("dbp:pattern")
@@ -203,7 +397,7 @@ def main(json_ld):
                 if IS_IN_DOCKER and data_set_base_path.startswith("file://"):
                     data_set_base_path_wo_protocol = data_set_base_path.replace("file://", "")
                     data_set_base_path_in_docker = os.path.join(
-                        '/input_in_docker', data_set_base_path_wo_protocol.lstrip('/')
+                        DOCKER_INPUT_PREFIX, data_set_base_path_wo_protocol.lstrip('/')
                     )
                     data_set_base_path = f"file://{data_set_base_path_in_docker}"
                 data_set_pattern = data_set_object.get("dbp:pattern")

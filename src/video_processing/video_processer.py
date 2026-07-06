@@ -1,10 +1,19 @@
 import os
 import cv2
+import shlex
 import subprocess
 from tqdm import tqdm
 
 
-def run_ffmpeg_command(input_video, previous_end_time, start_time, codec, output_file):
+def _record_command(command_log, command):
+    """実行したffmpegコマンドを（Kintoneログ等での再現用に）記録する。"""
+    if command_log is not None:
+        command_log.append(shlex.join(command))
+
+
+def run_ffmpeg_command(
+    input_video, previous_end_time, start_time, codec, output_file, command_log=None
+):
     command = [
         "ffmpeg",
         "-y",
@@ -27,6 +36,7 @@ def run_ffmpeg_command(input_video, previous_end_time, start_time, codec, output
         output_file,
     ]
 
+    _record_command(command_log, command)
     try:
         subprocess.run(command, check=True)
         print(f"Trimmed section saved as: {output_file}")
@@ -34,7 +44,7 @@ def run_ffmpeg_command(input_video, previous_end_time, start_time, codec, output
         print(f"Error occurred while trimming section: {e}")
 
 
-def trim_video_sections(input_dir, output_dir, output_video_name, trimmed_data):
+def trim_video_sections(input_dir, output_dir, output_video_name, trimmed_data, command_log=None):
     video_name = trimmed_data["video_name"]
     input_video = os.path.join(input_dir, video_name)
     codec = trimmed_data.get("codec", "h264")
@@ -48,7 +58,14 @@ def trim_video_sections(input_dir, output_dir, output_video_name, trimmed_data):
         if previous_end_time != start_time:
             output_file = f"{output_dir}/{output_video_name}-part{i+1}.mkv"
             part_files.append(output_file)
-            run_ffmpeg_command(input_video, previous_end_time, start_time, codec, output_file)
+            run_ffmpeg_command(
+                input_video,
+                previous_end_time,
+                start_time,
+                codec,
+                output_file,
+                command_log=command_log,
+            )
 
         previous_end_time = section["end_time"]
 
@@ -60,13 +77,26 @@ def trim_video_sections(input_dir, output_dir, output_video_name, trimmed_data):
         if last_start_time != last_end_time:
             output_file = f"{output_dir}/{output_video_name}-part{len(trimmed_sections)+1}.mkv"
             part_files.append(output_file)
-            run_ffmpeg_command(input_video, last_start_time, last_end_time, codec, output_file)
+            run_ffmpeg_command(
+                input_video,
+                last_start_time,
+                last_end_time,
+                codec,
+                output_file,
+                command_log=command_log,
+            )
 
     return part_files
 
 
 def concatenate_videos(
-    output_dir, output_video_name, part_files, threshold, window_threshold, codec="h264"
+    output_dir,
+    output_video_name,
+    part_files,
+    threshold,
+    window_threshold,
+    codec="h264",
+    command_log=None,
 ):
     print("Concatenating trimmed videos...")
     list_file = f"{output_dir}/concat_list.txt"
@@ -99,6 +129,7 @@ def concatenate_videos(
         output_video
     ]
 
+    _record_command(command_log, command)
     try:
         subprocess.run(command, check=True)
         print(f"Concatenated video saved as: {output_video}")
@@ -113,7 +144,9 @@ def concatenate_videos(
             print(f"Error occurred while cleaning up: {e}")
 
 
-def copy_video_with_reencoding(input_dir, output_dir, video_name, output_video_name, codec):
+def copy_video_with_reencoding(
+    input_dir, output_dir, video_name, output_video_name, codec, command_log=None
+):
     input_video = os.path.join(input_dir, video_name)
     output_video = os.path.join(output_dir, output_video_name)
     os.makedirs(os.path.dirname(output_video), exist_ok=True)
@@ -134,6 +167,7 @@ def copy_video_with_reencoding(input_dir, output_dir, video_name, output_video_n
         "780k",
         output_video,
     ]
+    _record_command(command_log, command)
     try:
         subprocess.run(command, check=True)
         print(f"Video copied to {output_video}")
