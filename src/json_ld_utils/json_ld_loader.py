@@ -55,7 +55,7 @@ def apply_variables(data: dict, variables: dict) -> dict:
         for key, value in data.items():
             value_str = json.dumps(value)
             for var_key, var_value in variables.items():
-                value_str = value_str.replace(r"{{" + f"{var_key}" + r"}}", var_value)
+                value_str = value_str.replace(r"{{" + f"{var_key}" + r"}}", str(var_value))
             data[key] = json.loads(value_str)
 
     for key, value in data.items():
