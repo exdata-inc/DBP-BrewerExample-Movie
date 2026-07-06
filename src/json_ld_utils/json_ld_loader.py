@@ -46,6 +46,29 @@ async def fetch_nested_data(data, current_depth):
     return data
 
 
+def apply_variables(data: dict, variables: dict) -> dict:
+    for key, value in data.items():
+        if key == "dbp:variables" and isinstance(value, dict):
+            variables.update(data.get("dbp:variables") or {})
+
+    if variables:
+        for key, value in data.items():
+            value_str = json.dumps(value)
+            for var_key, var_value in variables.items():
+                value_str = value_str.replace(r"{{" + f"{var_key}" + r"}}", str(var_value))
+            data[key] = json.loads(value_str)
+
+    for key, value in data.items():
+        if isinstance(value, dict):
+            data[key] = apply_variables(value, variables)
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, dict):
+                    data[key][i] = apply_variables(item, variables)
+
+    return data
+
+
 async def fetch_brewing_demands_json(url: str, depth: int = 6):
     if url.startswith("http"):
         initial_response = await fetch_data(url)
@@ -53,4 +76,5 @@ async def fetch_brewing_demands_json(url: str, depth: int = 6):
     else:
         initial_json_data = json.loads(url)
     final_result = await fetch_nested_data(initial_json_data, depth)
+    final_result = apply_variables(final_result, {})
     return final_result

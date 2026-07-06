@@ -168,7 +168,16 @@ def finalize_trimmed_data(
 
 
 def save_trimmed_log(
-    diffs_file_path, video_path, output_path, video_name, threshold, video_length, video_fps, window_threshold, codec
+    diffs_file_path,
+    video_path,
+    output_path,
+    video_name,
+    output_video_name,
+    threshold,
+    video_length,
+    video_fps,
+    window_threshold,
+    codec,
 ):
     trimmed_sections = extract_sections(diffs_file_path, threshold)
     result = finalize_trimmed_data(
@@ -180,8 +189,8 @@ def save_trimmed_log(
         video_fps=video_fps,
         codec=codec,
     )
-    video_name_without_ext = os.path.splitext(video_name)[0]
-    output_path = os.path.join(output_path, f"{video_name_without_ext}.json")
+    output_video_name_without_ext = os.path.splitext(output_video_name)[0]
+    output_path = os.path.join(output_path, f"{output_video_name_without_ext}.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as file:
         json.dump(result, file, indent=4)

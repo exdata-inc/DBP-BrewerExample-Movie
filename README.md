@@ -14,7 +14,14 @@ docker build --no-cache -t dbp-brewer-example-movie .
 
 ```bash
 docker run -it \
-  -v <your_mount_directory>:/app/<your_data_directory> \
+  -v <input_video_directory>:/input_in_docker \
+  -v <output_video_directory>:/output_in_docker \
   dbp-brewer-example-movie \
   "<brewing_demand_json_ld>"
 ```
+
+### パラメータ説明
+
+- `<input_video_directory>`: 入力動画ファイルが格納されているホストマシン上のディレクトリパス
+- `<output_video_directory>`: 処理済み動画を保存するホストマシン上のディレクトリパス
+- `<brewing_demand_json_ld>`: JSON-LD形式の醸造需要データまたはそのURL
