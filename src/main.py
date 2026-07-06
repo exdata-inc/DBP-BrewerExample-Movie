@@ -32,7 +32,7 @@ def process_video(
 ):
     if output_path.startswith("file://"):
         output_path = output_path.replace("file://", "")
-        output_video_name = f"{output_prefix}{video_name}"
+        output_video_name = os.path.basename(f"{output_prefix}{video_name}")
         print(f"Processing video: {video_path}/{video_name}")
         if do_trim:
             print("Calculating frame differences...")
