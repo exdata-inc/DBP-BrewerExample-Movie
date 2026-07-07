@@ -1,6 +1,7 @@
 import os
 import glob
 import json
+import time
 import asyncio
 import argparse
 from datetime import datetime
@@ -17,6 +18,7 @@ from json_ld_utils.json_ld_loader import fetch_brewing_demands_json
 from utils.utils import get_brewing_arguments, extract_minimum_unit, extract_data_sets
 from kintone_api import KintoneClient, create_video_record
 from media_metadata import run_ffprobe_metadata, get_mount_ip, extract_thumbnail
+from slack_api import SlackNotifier, notify_date_start, notify_video_end, notify_date_end
 
 IS_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER") == "1"
 
@@ -166,6 +168,42 @@ def _push_process_log_to_kintone(
         print(f"Error while pushing Kintone log: {e}")
 
 
+def _safe_getsize(path):
+    """ファイルが存在すればバイトサイズを、無ければ0を返す。"""
+    return os.path.getsize(path) if os.path.exists(path) else 0
+
+
+def _notify_slack_video(
+    target_date,
+    depo,
+    camera,
+    video_name,
+    success,
+    input_size,
+    output_size,
+    processing_time,
+    notifier=None,
+):
+    """動画1本の処理結果をSlackに通知する（Slack側のエラーは動画処理に影響させない）。"""
+    try:
+        notifier = notifier or SlackNotifier()
+        if not notifier.is_configured:
+            return
+        notify_video_end(
+            target_date=target_date,
+            depo=depo,
+            camera=camera,
+            video_name=video_name,
+            success=success,
+            input_size=input_size,
+            output_size=output_size,
+            processing_time=processing_time,
+            notifier=notifier,
+        )
+    except Exception as e:
+        print(f"Error while sending Slack notification: {e}")
+
+
 def process_video(
     video_path,
     video_name,
@@ -178,8 +216,10 @@ def process_video(
     do_trim_using_opencv=False,
     output_prefix="",
     push_kintone=False,
+    push_slack=False,
     depo="",
     year_month=None,
+    target_date=None,
 ):
     output_video_name = os.path.basename(f"{output_prefix}{video_name}")
     triimed_data = None
@@ -190,7 +230,9 @@ def process_video(
     brewer = ("variance" if use_variance else "frame_diffs") if do_trim else "reencode_only"
     camera = _extract_camera(video_path)
     resolved_year_month = year_month or datetime.now().strftime("%Y-%m")
-    # 出力先の種類にかかわらず、処理後にKintoneへlog送信できるよう try を全ブランチの外側に取る
+    result = None
+    start_time = time.time()
+    # 出力先の種類にかかわらず、処理後にKintone/Slackへ通知できるよう try を全ブランチの外側に取る
     try:
         if output_path.startswith("file://"):
             output_path = output_path.replace("file://", "")
@@ -280,9 +322,20 @@ def process_video(
         error_message = str(e)
         raise
     finally:
+        input_video = os.path.join(video_path, video_name)
+        output_video = os.path.join(output_path, output_video_name)
+        input_size = _safe_getsize(input_video)
+        output_size = _safe_getsize(output_video)
+        processing_time = time.time() - start_time
+        result = {
+            "success": success,
+            "camera": camera,
+            "video_name": video_name,
+            "input_size": input_size,
+            "output_size": output_size,
+            "processing_time": processing_time,
+        }
         if push_kintone:
-            input_video = os.path.join(video_path, video_name)
-            output_video = os.path.join(output_path, output_video_name)
             note_video = _build_note_video(
                 input_video=input_video,
                 output_video=output_video,
@@ -306,12 +359,24 @@ def process_video(
                 output_video=output_video,
                 note_video=note_video,
             )
+        if push_slack:
+            _notify_slack_video(
+                target_date=target_date or resolved_year_month,
+                depo=depo,
+                camera=camera,
+                video_name=video_name,
+                success=success,
+                input_size=input_size,
+                output_size=output_size,
+                processing_time=processing_time,
+            )
 
     print("Process completed successfully.")
     print("----------params----------")
     print(f"Threshold:        {threshold}")
     print(f"Window Threshold: {window_threshold}")
     print(f"Codec:            {codec}")
+    return result
 
 
 def brewing_videos(
@@ -334,6 +399,15 @@ def brewing_videos(
     )
     # Kintoneレコードのキーとなる拠点。醸造引数 depo または環境変数 KINTONE_DEPO
     depo = brewing_arguments.get("depo") or os.getenv("KINTONE_DEPO", "")
+    # 醸造引数 push_slack、または環境変数 SLACK_NOTIFY が有効ならSlackに通知する
+    push_slack = _to_bool(brewing_arguments.get("push_slack", False)) or _to_bool(
+        os.getenv("SLACK_NOTIFY")
+    )
+    slack = SlackNotifier() if push_slack else None
+    if slack and not slack.is_configured:
+        print("Slack is not configured (SLACK_BOT_TOKEN / SLACK_CHANNEL). Skipping notifications.")
+        push_slack = False
+        slack = None
 
     if data_set_base_path.startswith("file://"):
         file_path = data_set_base_path.replace("file://", "")
@@ -343,17 +417,24 @@ def brewing_videos(
         while dt <= dt_end:
             # year_month は処理対象日から決定（TRUSCOと同じ規則）
             year_month = dt.strftime("%Y-%m")
+            date_str = dt.strftime("%Y-%m-%d")
             video_path_pattern = os.path.join(file_path, dt.strftime(data_set_pattern))
             video_paths = glob.glob(video_path_pattern)
             if not video_paths:
                 print(f"No videos found for pattern: {video_path_pattern}")
             else:
+                if slack:
+                    notify_date_start(date_str, depo, len(video_paths), notifier=slack)
+                date_success = 0
+                date_fail = 0
+                date_input_size = 0
+                date_output_size = 0
                 for video_path in sorted(video_paths):
                     video_name = os.path.basename(video_path)
                     relative_path = os.path.relpath(video_path, file_path)
                     output_video_path = os.path.join(output_path, relative_path)
                     brewed_output_path = os.path.dirname(output_video_path)
-                    process_video(
+                    result = process_video(
                         output_path=brewed_output_path,
                         video_path=os.path.dirname(video_path),
                         video_name=video_name,
@@ -363,8 +444,19 @@ def brewing_videos(
                         do_trim=do_trim,
                         output_prefix=output_prefix,
                         push_kintone=push_kintone,
+                        push_slack=push_slack,
                         depo=depo,
                         year_month=year_month,
+                        target_date=date_str,
+                    )
+                    if result:
+                        date_success += 1 if result["success"] else 0
+                        date_fail += 0 if result["success"] else 1
+                        date_input_size += result["input_size"]
+                        date_output_size += result["output_size"]
+                if slack:
+                    notify_date_end(
+                        date_str, depo, date_success, date_fail, date_input_size, date_output_size, notifier=slack
                     )
             dt += duration
     # elif data_set_base_path.startswith("ftp://"):
