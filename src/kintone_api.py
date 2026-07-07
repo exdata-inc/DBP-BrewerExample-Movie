@@ -68,7 +68,14 @@ class KintoneClient:
     ):
         self.subdomain = subdomain if subdomain is not None else os.getenv("KINTONE_SUBDOMAIN", "")
         app_id_raw = app_id if app_id is not None else os.getenv("KINTONE_APP_ID", "")
-        self.app_id = int(app_id_raw) if str(app_id_raw).strip() else 0
+        # 非数値（例: "abc"）や空文字は 0 にフォールバックする。
+        # 0 のままだと is_configured が False になり、Kintone連携は無効化される
+        # （KintoneClient() 生成時に int() で例外落ちさせない）。
+        try:
+            self.app_id = int(app_id_raw) if str(app_id_raw).strip() else 0
+        except (TypeError, ValueError):
+            print(f"Invalid KINTONE_APP_ID: {app_id_raw!r}. Kintone integration will be disabled.")
+            self.app_id = 0
         self.api_token = api_token if api_token is not None else os.getenv("KINTONE_API_TOKEN", "")
         self.timeout = timeout
 

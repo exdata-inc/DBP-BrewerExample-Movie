@@ -233,6 +233,8 @@ def process_video(
     depo="",
     year_month=None,
     target_date=None,
+    kintone_client=None,
+    slack_notifier=None,
 ):
     output_video_name = os.path.basename(f"{output_prefix}{video_name}")
     triimed_data = None
@@ -371,6 +373,7 @@ def process_video(
                 input_video=input_video,
                 output_video=output_video,
                 note_video=note_video,
+                client=kintone_client,
             )
         if push_slack:
             _notify_slack_video(
@@ -382,6 +385,7 @@ def process_video(
                 input_size=input_size,
                 output_size=output_size,
                 processing_time=processing_time,
+                notifier=slack_notifier,
             )
 
     print("Process completed successfully.")
@@ -406,23 +410,33 @@ def brewing_videos(
     codec = brewing_arguments.get("codec", "libx264")
     do_trim = brewing_arguments.get("do_trim", True)
     output_prefix = brewing_arguments.get("output_prefix", "")
+    # KintoneClient / SlackNotifier は動画ごとではなく、ここで1度だけ生成して
+    # process_video → 各ヘルパーへ渡す（初期化ログや例外リスクを抑える）。
+    kintone = KintoneClient()
+    slack = SlackNotifier()
     # 認証情報（トークン等）がそろっていれば既定でKintoneに送信する。
     # 醸造引数 push_kintone / 環境変数 KINTONE_PUSH_LOG で明示的に有効化・無効化できる。
     push_kintone = _resolve_flag(
-        brewing_arguments.get("push_kintone"), os.getenv("KINTONE_PUSH_LOG"), KintoneClient().is_configured
+        brewing_arguments.get("push_kintone"), os.getenv("KINTONE_PUSH_LOG"), kintone.is_configured
     )
     # Kintoneレコードのキーとなる拠点。醸造引数 depo または環境変数 KINTONE_DEPO
     depo = brewing_arguments.get("depo") or os.getenv("KINTONE_DEPO", "")
+    # depo が空だと find_record_id のクエリが depo = "" になり、別拠点のレコードと
+    # 混ざる（意図しない集約）おそれがあるため、Kintoneプッシュをスキップする。
+    if push_kintone and not depo:
+        print(
+            "Kintone push is enabled but depo is empty "
+            "(brewing_arguments 'depo' / KINTONE_DEPO). Skipping log push to avoid unintended aggregation."
+        )
+        push_kintone = False
     # 認証情報（トークン等）がそろっていれば既定でSlackに通知する。
     # 醸造引数 push_slack / 環境変数 SLACK_NOTIFY で明示的に有効化・無効化できる。
     push_slack = _resolve_flag(
-        brewing_arguments.get("push_slack"), os.getenv("SLACK_NOTIFY"), SlackNotifier().is_configured
+        brewing_arguments.get("push_slack"), os.getenv("SLACK_NOTIFY"), slack.is_configured
     )
-    slack = SlackNotifier() if push_slack else None
-    if slack and not slack.is_configured:
+    if push_slack and not slack.is_configured:
         print("Slack is not configured (SLACK_BOT_TOKEN / SLACK_CHANNEL). Skipping notifications.")
         push_slack = False
-        slack = None
 
     if data_set_base_path.startswith("file://"):
         file_path = data_set_base_path.replace("file://", "")
@@ -438,7 +452,7 @@ def brewing_videos(
             if not video_paths:
                 print(f"No videos found for pattern: {video_path_pattern}")
             else:
-                if slack:
+                if push_slack:
                     notify_date_start(date_str, depo, len(video_paths), notifier=slack)
                 date_success = 0
                 date_fail = 0
@@ -463,13 +477,15 @@ def brewing_videos(
                         depo=depo,
                         year_month=year_month,
                         target_date=date_str,
+                        kintone_client=kintone,
+                        slack_notifier=slack,
                     )
                     if result:
                         date_success += 1 if result["success"] else 0
                         date_fail += 0 if result["success"] else 1
                         date_input_size += result["input_size"]
                         date_output_size += result["output_size"]
-                if slack:
+                if push_slack:
                     notify_date_end(
                         date_str, depo, date_success, date_fail, date_input_size, date_output_size, notifier=slack
                     )
