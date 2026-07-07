@@ -18,6 +18,12 @@ def get_brewing_arguments(brewing_demands_json):
                 brewing_arguments["do_trim"] = brewing_argument_info["schema:value"]
             if "output_prefix" == brewing_argument_info["dbp:key"]:
                 brewing_arguments["output_prefix"] = brewing_argument_info["schema:value"]
+            if "push_kintone" == brewing_argument_info["dbp:key"]:
+                brewing_arguments["push_kintone"] = brewing_argument_info["schema:value"]
+            if "push_slack" == brewing_argument_info["dbp:key"]:
+                brewing_arguments["push_slack"] = brewing_argument_info["schema:value"]
+            if "depo" == brewing_argument_info["dbp:key"]:
+                brewing_arguments["depo"] = brewing_argument_info["schema:value"]
         return brewing_arguments
     except Exception:
         print("No Brewing Arguments Found")
