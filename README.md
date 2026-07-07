@@ -71,21 +71,24 @@ docker run -it \
 
 ### 有効化の条件
 
-以下の2つを満たしたときにログが送信されます。
+**接続情報が環境変数で設定されていれば、既定でログが送信されます。**
 
-1. Kintoneの接続情報が環境変数で設定されていること
-   - `KINTONE_SUBDOMAIN` … サブドメイン（`https://<subdomain>.cybozu.com`）
-   - `KINTONE_APP_ID` … 記録先アプリのID
-   - `KINTONE_API_TOKEN` … 対象アプリのAPIトークン
-2. 送信の有効化フラグが立っていること。以下のいずれか。
-   - 醸造需要JSON-LDの `dbp:brewingArgument` に `dbp:key: "push_kintone"`, `schema:value: "true"` を指定
-   - もしくは環境変数 `KINTONE_PUSH_LOG=1` を設定
+- `KINTONE_SUBDOMAIN` … サブドメイン（`https://<subdomain>.cybozu.com`）
+- `KINTONE_APP_ID` … 記録先アプリのID
+- `KINTONE_API_TOKEN` … 対象アプリのAPIトークン
+
+3つがそろっていれば送信され、未設定なら自動的にスキップします（フラグ指定は不要）。
+明示的に切り替えたい場合のみ、以下で有効化・無効化できます（醸造引数が環境変数より優先）。
+
+- 醸造需要JSON-LDの `dbp:brewingArgument` に `dbp:key: "push_kintone"`, `schema:value: "true"` / `"false"`
+- もしくは環境変数 `KINTONE_PUSH_LOG=1` / `0`
+
+例えば「接続情報はあるが今回は送りたくない」場合は `push_kintone=false`（または `KINTONE_PUSH_LOG=0`）を指定します。
 
 さらに、レコードのキーとなる**拠点 `depo`** を指定してください。
 醸造需要JSON-LDの `dbp:brewingArgument`（`dbp:key: "depo"`）、または環境変数 `KINTONE_DEPO` で指定できます。
 
-接続情報が未設定の場合や、フラグが無効の場合はプッシュをスキップします。
-また、Kintone側の送信に失敗しても動画醸造の処理は継続されます（ログ送信は動画処理を止めません）。
+Kintone側の送信に失敗しても動画醸造の処理は継続されます（ログ送信は動画処理を止めません）。
 `record_started_at` / `ip` / `thumbnail_img_path` の取得には ffprobe / findmnt / ffmpeg を用い、
 利用できない環境ではそれぞれ処理時刻 / `unknown` / 省略にフォールバックします。
 
@@ -96,13 +99,14 @@ docker run -it \
   -e KINTONE_SUBDOMAIN=your-subdomain \
   -e KINTONE_APP_ID=123 \
   -e KINTONE_API_TOKEN=your-api-token \
-  -e KINTONE_PUSH_LOG=1 \
   -e KINTONE_DEPO=p_tokai \
   -v <input_video_directory>:/input_in_docker \
   -v <output_video_directory>:/output_in_docker \
   dbp-brewer-example-movie \
   "<brewing_demand_json_ld>"
 ```
+
+（`KINTONE_SUBDOMAIN` / `KINTONE_APP_ID` / `KINTONE_API_TOKEN` がそろっていれば自動で送信されます。）
 
 環境変数のサンプルは [.env.sample](.env.sample) を参照してください。
 
@@ -122,17 +126,20 @@ docker run -it \
 
 ### 有効化の条件
 
-以下の2つを満たしたときに通知されます。
+**接続情報が環境変数で設定されていれば、既定で通知されます。**
 
-1. Slackの接続情報が環境変数で設定されていること
-   - `SLACK_BOT_TOKEN` … Slack Bot のトークン（`xoxb-...`）
-   - `SLACK_CHANNEL` … 投稿先チャンネルID
-2. 送信の有効化フラグが立っていること。以下のいずれか。
-   - 醸造需要JSON-LDの `dbp:brewingArgument` に `dbp:key: "push_slack"`, `schema:value: "true"` を指定
-   - もしくは環境変数 `SLACK_NOTIFY=1` を設定
+- `SLACK_BOT_TOKEN` … Slack Bot のトークン（`xoxb-...`）
+- `SLACK_CHANNEL` … 投稿先チャンネルID
 
-接続情報が未設定の場合や、フラグが無効の場合は通知をスキップします。
-また、Slackへの送信に失敗しても動画醸造の処理は継続されます（通知は動画処理を止めません）。
+2つがそろっていれば通知され、未設定なら自動的にスキップします（フラグ指定は不要）。
+明示的に切り替えたい場合のみ、以下で有効化・無効化できます（醸造引数が環境変数より優先）。
+
+- 醸造需要JSON-LDの `dbp:brewingArgument` に `dbp:key: "push_slack"`, `schema:value: "true"` / `"false"`
+- もしくは環境変数 `SLACK_NOTIFY=1` / `0`
+
+「接続情報はあるが今回は通知したくない」場合は `push_slack=false`（または `SLACK_NOTIFY=0`）を指定します。
+
+Slackへの送信に失敗しても動画醸造の処理は継続されます（通知は動画処理を止めません）。
 拠点表示には Kintone と共通の `depo` を用います。
 
 ### 実行例
@@ -141,7 +148,6 @@ docker run -it \
 docker run -it \
   -e SLACK_BOT_TOKEN=xoxb-your-bot-token \
   -e SLACK_CHANNEL=C0XXXXXXXXX \
-  -e SLACK_NOTIFY=1 \
   -e KINTONE_DEPO=p_tokai \
   -v <input_video_directory>:/input_in_docker \
   -v <output_video_directory>:/output_in_docker \
@@ -149,4 +155,4 @@ docker run -it \
   "<brewing_demand_json_ld>"
 ```
 
-Kintone と Slack は同時に有効化できます（環境変数を両方指定）。
+Kintone と Slack の接続情報を両方設定すれば、両方に自動で送信されます。

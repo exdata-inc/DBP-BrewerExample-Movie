@@ -37,6 +37,19 @@ def _to_bool(value):
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _resolve_flag(arg_value, env_value, default):
+    """
+    醸造引数・環境変数に明示指定があればそれを使い、無ければ default を使う。
+
+    明示的な true/false（1/0）で有効化・無効化でき、指定が無ければ default に従う。
+    （認証情報がそろっていれば送るが、明示的に false を指定すれば送らない、という挙動に使う）
+    """
+    explicit = arg_value if arg_value is not None else env_value
+    if explicit is not None and str(explicit) != "":
+        return _to_bool(explicit)
+    return default
+
+
 def _extract_camera(video_path):
     """入力パスから camera 識別子を抽出する（save_trimmed_log と同じ規則）。"""
     return next((part for part in video_path.split("/") if part.startswith("camera")), "unknown")
@@ -393,15 +406,17 @@ def brewing_videos(
     codec = brewing_arguments.get("codec", "libx264")
     do_trim = brewing_arguments.get("do_trim", True)
     output_prefix = brewing_arguments.get("output_prefix", "")
-    # 醸造引数 push_kintone、または環境変数 KINTONE_PUSH_LOG が有効ならKintoneにログを送信する
-    push_kintone = _to_bool(brewing_arguments.get("push_kintone", False)) or _to_bool(
-        os.getenv("KINTONE_PUSH_LOG")
+    # 認証情報（トークン等）がそろっていれば既定でKintoneに送信する。
+    # 醸造引数 push_kintone / 環境変数 KINTONE_PUSH_LOG で明示的に有効化・無効化できる。
+    push_kintone = _resolve_flag(
+        brewing_arguments.get("push_kintone"), os.getenv("KINTONE_PUSH_LOG"), KintoneClient().is_configured
     )
     # Kintoneレコードのキーとなる拠点。醸造引数 depo または環境変数 KINTONE_DEPO
     depo = brewing_arguments.get("depo") or os.getenv("KINTONE_DEPO", "")
-    # 醸造引数 push_slack、または環境変数 SLACK_NOTIFY が有効ならSlackに通知する
-    push_slack = _to_bool(brewing_arguments.get("push_slack", False)) or _to_bool(
-        os.getenv("SLACK_NOTIFY")
+    # 認証情報（トークン等）がそろっていれば既定でSlackに通知する。
+    # 醸造引数 push_slack / 環境変数 SLACK_NOTIFY で明示的に有効化・無効化できる。
+    push_slack = _resolve_flag(
+        brewing_arguments.get("push_slack"), os.getenv("SLACK_NOTIFY"), SlackNotifier().is_configured
     )
     slack = SlackNotifier() if push_slack else None
     if slack and not slack.is_configured:
