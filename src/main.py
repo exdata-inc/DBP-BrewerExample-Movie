@@ -58,6 +58,19 @@ def _to_host_path(path):
     return path
 
 
+def _to_host_text(text):
+    """
+    文字列（ffmpegコマンド等）に含まれるコンテナ内パスをホストから見たパスに置換する。
+
+    Docker実行時、コマンド中に現れる <prefix>/... をホスト側のパスへ書き換える。
+    """
+    if not text or not IS_IN_DOCKER:
+        return text
+    for prefix in (DOCKER_OUTPUT_PREFIX, DOCKER_INPUT_PREFIX):
+        text = text.replace(prefix + "/", "/")
+    return text
+
+
 def _build_note_video(
     input_video,
     output_video,
@@ -87,9 +100,9 @@ def _build_note_video(
         "threshold": threshold,
         "window_threshold": window_threshold,
         "codec": codec,
-        "input_video": input_video,
-        "output_video": output_video,
-        "ffmpeg_commands": ffmpeg_commands,
+        "input_video": _to_host_path(input_video),
+        "output_video": _to_host_path(output_video),
+        "ffmpeg_commands": [_to_host_text(cmd) for cmd in ffmpeg_commands],
     }
     if error_message:
         note["error_message"] = error_message
